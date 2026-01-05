@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>iCareStock AI 室内设计预览 · UAE</title>
+  <style>
+    :root{--bg:#0b1020;--card:rgba(255,255,255,.08);--line:rgba(255,255,255,.14);--txt:rgba(255,255,255,.92);--muted:rgba(255,255,255,.70)}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:radial-gradient(1200px 700px at 20% 10%, #1a2552 0%, transparent 55%),
+         radial-gradient(1000px 600px at 80% 30%, #2a1140 0%, transparent 60%), var(--bg); color:var(--txt);}
+    .wrap{max-width:1100px;margin:0 auto;padding:40px 18px 60px}
+    .top{display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+    h1{margin:0;font-size:28px;letter-spacing:.2px}
+    .sub{margin:10px 0 0;color:var(--muted);line-height:1.6}
+    .pill{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.25);color:var(--muted);font-size:13px}
+    .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;margin-top:22px}
+    @media (max-width:960px){.grid{grid-template-columns:1fr}}
+    .card{border:1px solid var(--line);border-radius:18px;background:var(--card);backdrop-filter: blur(12px); overflow:hidden}
+    .card h2{margin:0;padding:16px 18px;border-bottom:1px solid var(--line);font-size:16px}
+    .card .body{padding:18px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .file{flex:1;min-width:260px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:rgba(0,0,0,.22)}
+    select{padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.22);color:var(--txt);min-width:220px}
+    button{padding:12px 16px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:#fff;color:#111;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.55;cursor:not-allowed}
+    .hint{margin-top:10px;color:var(--muted);font-size:13px;line-height:1.55}
+    .thumbs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}
+    .thumb{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:rgba(0,0,0,.18);aspect-ratio:4/3;display:flex;align-items:center;justify-content:center}
+    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+    .status{margin-top:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.22);color:var(--muted);font-size:13px;white-space:pre-wrap}
+    .results{display:grid;grid-template-columns:1fr;gap:12px}
+    .imgbox{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:rgba(0,0,0,.20)}
+    .imgbox img{width:100%;display:block}
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>iCareStock AI 室内设计预览 · UAE</h1>
+        <div class="sub">
+          上传房间照片 → 选择风格 → 点击生成。<br/>
+          先把“正式出图”跑通（稳定优先），再升级 3 方向 + 商品匹配与报价链路。
+        </div>
+      </div>
+      <div class="pill">⚡ API：<b>/api/generate</b></div>
+    </div>
+
+    <div class="grid">
+      <!-- 左：上传与生成 -->
+      <div class="card">
+        <h2>开始生成</h2>
+        <div class="body">
+          <div class="row">
+            <input id="files" class="file" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+            <select id="style">
+              <option value="Modern Minimal">Modern Minimal（现代极简）</option>
+              <option value="Luxury">Luxury（轻奢）</option>
+              <option value="Scandinavian">Scandinavian（北欧）</option>
+              <option value="Arabic Luxury">Arabic Luxury（阿拉伯轻奢）</option>
+            </select>
+            <button id="btn">✨ 生成预览（正式出图）</button>
+          </div>
+
+          <div class="hint">
+            你最多可选 5 张图；本版本先用第 1 张作为生图输入（成功率最高）。
+          </div>
+
+          <div class="thumbs" id="thumbs"></div>
+          <div class="status" id="status">等待上传…</div>
+        </div>
+      </div>
+
+      <!-- 右：结果 -->
+      <div class="card">
+        <h2>生成结果</h2>
+        <div class="body">
+          <div class="results" id="results">
+            <div class="hint">生成成功后，这里会显示图片（以及必要时的错误信息）。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const filesEl = document.getElementById("files");
+  const thumbsEl = document.getElementById("thumbs");
+  const styleEl = document.getElementById("style");
+  const btn = document.getElementById("btn");
+  const statusEl = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+
+  let selectedFiles = [];
+
+  filesEl.addEventListener("change", () => {
+    selectedFiles = Array.from(filesEl.files || []).slice(0, 5);
+    renderThumbs();
+    statusEl.textContent = selectedFiles.length ? `已选 ${selectedFiles.length} 张（将用第 1 张生成）` : "等待上传…";
+  });
+
+  function renderThumbs(){
+    thumbsEl.innerHTML = "";
+    selectedFiles.forEach(f => {
+      const div = document.createElement("div");
+      div.className = "thumb";
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(f);
+      div.appendChild(img);
+      thumbsEl.appendChild(div);
+    });
+    for(let i=selectedFiles.length;i<5;i++){
+      const div = document.createElement("div");
+      div.className = "thumb";
+      div.style.color = "rgba(255,255,255,.35)";
+      div.style.fontSize = "12px";
+      div.textContent = "空";
+      thumbsEl.appendChild(div);
+    }
+  }
+
+  btn.addEventListener("click", async () => {
+    if (!selectedFiles.length) {
+      statusEl.textContent = "请先选择至少 1 张图片。";
+      return;
+    }
+
+    btn.disabled = true;
+    resultsEl.innerHTML = `<div class="hint">正在生成中…（如果失败，我会把后端错误原样显示出来，方便你截图给我修）</div>`;
+    statusEl.textContent = "上传中…";
+
+    try {
+      const base64 = await fileToBase64(selectedFiles[0]); // 稳定优先：只用第一张
+      statusEl.textContent = "已上传，调用生成接口…";
+
+      const r = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, style: styleEl.value })
+      });
+
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch(e){
+        throw new Error("后端返回非 JSON：\n" + text.slice(0, 400));
+      }
+
+      if (!r.ok || !data.ok) {
+        throw new Error("生成失败：\n" + JSON.stringify(data, null, 2));
+      }
+
+      const urls = (data.urls || []).filter(Boolean);
+      if (!urls.length) {
+        throw new Error("生成成功但没有拿到图片 URL：\n" + JSON.stringify(data, null, 2));
+      }
+
+      statusEl.textContent = `✅ 成功：拿到 ${urls.length} 张图片`;
+      resultsEl.innerHTML = "";
+      urls.forEach((u, idx) => {
+        const box = document.createElement("div");
+        box.className = "imgbox";
+        const img = document.createElement("img");
+        img.src = u;
+        img.alt = "result-" + (idx+1);
+        box.appendChild(img);
+        resultsEl.appendChild(box);
+      });
+
+    } catch (err) {
+      statusEl.textContent = "❌ 失败（把下面错误截图给我）";
+      resultsEl.innerHTML = `<div class="status">${String(err.message || err)}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function fileToBase64(file){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result || "";
+        // result 是 data:*/*;base64,xxxx
+        resolve(String(result));
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  renderThumbs();
+</script>
+</body>
+</html>
