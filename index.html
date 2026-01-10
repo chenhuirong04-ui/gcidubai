@@ -1,67 +1,278 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>iCare 管家婆</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>iCare 管家婆 · Bookkeeping</title>
+
+  <!-- Tailwind CDN（纯静态可用） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
   <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-        Helvetica, Arial, sans-serif;
-      background: #f3f4f6;
-    }
-    .card {
-      max-width: 720px;
-      margin: 80px auto;
-      background: white;
-      border-radius: 16px;
-      padding: 32px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-    }
-    h1 {
-      margin-top: 0;
-    }
-    button {
-      background: #4f46e5;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      margin-top: 16px;
-    }
-    pre {
-      background: #f9fafb;
-      padding: 16px;
-      border-radius: 8px;
-      overflow: auto;
-    }
+    html, body { height: 100%; }
   </style>
 </head>
 
-<body>
-  <div class="card">
-    <h1>iCare 管家婆</h1>
-    <p>当前状态：系统已成功加载</p>
+<body class="min-h-full bg-slate-50">
+  <div id="app" class="min-h-screen"></div>
 
-    <button onclick="addQuote()">➕ 新增一条测试报价</button>
+  <script type="module">
+    import { h, render } from "https://esm.sh/preact@10.19.6";
+    import { useEffect, useMemo, useState } from "https://esm.sh/preact@10.19.6/hooks";
+    import htm from "https://esm.sh/htm@3.1.1";
+    const html = htm.bind(h);
 
-    <pre id="output">[]</pre>
-  </div>
+    // ========= 轻量持久化（localStorage）=========
+    const APP_ID = "icare_bookkeeping_v1";
+    const nowISO = () => new Date().toISOString();
 
-  <script>
-    let quotes = [];
-
-    function addQuote() {
-      quotes.push({
-        id: Date.now(),
-        客户: "测试客户",
-        金额: Math.floor(Math.random() * 1000) + 100
-      });
-      document.getElementById("output").textContent =
-        JSON.stringify(quotes, null, 2);
+    function safeParse(json, fallback) {
+      try { return JSON.parse(json); } catch { return fallback; }
     }
+
+    function loadState() {
+      const raw = localStorage.getItem(APP_ID);
+      const s = safeParse(raw, null);
+      if (s && typeof s === "object") return s;
+      return {
+        meta: { app: "iCare Bookkeeping", version: 1, createdAt: nowISO(), updatedAt: nowISO() },
+        quotes: [],
+        orders: [],
+        receipts: []
+      };
+    }
+
+    function saveState(state) {
+      const next = {
+        ...state,
+        meta: { ...state.meta, updatedAt: nowISO() }
+      };
+      localStorage.setItem(APP_ID, JSON.stringify(next));
+      return next;
+    }
+
+    function uid(prefix="ID") {
+      return prefix + "_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+    }
+
+    // ========= 通用小组件 =========
+    function Pill({ children }) {
+      return html`<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">${children}</span>`;
+    }
+
+    function Btn({ onClick, variant="primary", children, disabled=false }) {
+      const cls =
+        variant === "primary"
+          ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+          : variant === "ghost"
+          ? "bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
+          : "bg-slate-900 hover:bg-slate-800 text-white";
+      return html`
+        <button
+          disabled=${disabled}
+          onClick=${onClick}
+          class="px-3 py-2 rounded-lg text-sm font-medium transition ${cls} disabled:opacity-50 disabled:cursor-not-allowed">
+          ${children}
+        </button>
+      `;
+    }
+
+    function Field({ label, value, setValue, placeholder="" }) {
+      return html`
+        <label class="block">
+          <div class="text-xs text-slate-600 mb-1">${label}</div>
+          <input
+            class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
+            value=${value}
+            placeholder=${placeholder}
+            onInput=${(e)=>setValue(e.target.value)}
+          />
+        </label>
+      `;
+    }
+
+    function downloadText(filename, text, mime="application/json") {
+      const blob = new Blob([text], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    // ========= 主应用 =========
+    function App() {
+      const [state, setState] = useState(loadState());
+      const [tab, setTab] = useState("quotes");
+
+      // 表单
+      const [customer, setCustomer] = useState("");
+      const [items, setItems] = useState("");
+      const [amount, setAmount] = useState("");
+      const [note, setNote] = useState("");
+
+      useEffect(() => {
+        // 首次加载后写回 meta 更新时间，保证一致
+        setState(prev => saveState(prev));
+      }, []);
+
+      const list = useMemo(() => state[tab] || [], [state, tab]);
+
+      function addRecord() {
+        const amt = Number(amount || 0);
+        const record = {
+          id: uid(tab.toUpperCase().slice(0,3)),
+          createdAt: nowISO(),
+          customer: customer.trim(),
+          itemsText: items.trim(),
+          amount: isFinite(amt) ? amt : 0,
+          note: note.trim()
+        };
+        const next = {
+          ...state,
+          [tab]: [record, ...(state[tab] || [])]
+        };
+        const saved = saveState(next);
+        setState(saved);
+
+        // reset
+        setCustomer("");
+        setItems("");
+        setAmount("");
+        setNote("");
+      }
+
+      function removeRecord(id) {
+        const next = {
+          ...state,
+          [tab]: (state[tab] || []).filter(x => x.id !== id)
+        };
+        setState(saveState(next));
+      }
+
+      function exportAll() {
+        downloadText(`icare-bookkeeping-export-${Date.now()}.json`, JSON.stringify(state, null, 2));
+      }
+
+      function exportCurrentTab() {
+        downloadText(`icare-${tab}-export-${Date.now()}.json`, JSON.stringify(list, null, 2));
+      }
+
+      function resetAll() {
+        if (!confirm("确定要清空全部数据吗？此操作不可恢复。")) return;
+        const cleared = {
+          meta: { app: "iCare Bookkeeping", version: 1, createdAt: nowISO(), updatedAt: nowISO() },
+          quotes: [], orders: [], receipts: []
+        };
+        localStorage.setItem(APP_ID, JSON.stringify(cleared));
+        setState(cleared);
+      }
+
+      const tabs = [
+        { key: "quotes", name: "报价 Quotes" },
+        { key: "orders", name: "订单 Orders" },
+        { key: "receipts", name: "收款 Receipts" }
+      ];
+
+      return html`
+        <div class="max-w-6xl mx-auto p-4 md:p-6">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <div class="text-2xl font-bold text-slate-900">iCare 管家婆</div>
+              <div class="text-sm text-slate-600 mt-1">
+                纯静态版本（GitHub Pages 可运行） · <${Pill}>本地持久化 localStorage</${Pill}>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <${Btn} variant="ghost" onClick=${exportCurrentTab}>导出当前页</${Btn}>
+              <${Btn} variant="ghost" onClick=${exportAll}>导出全部</${Btn}>
+              <${Btn} variant="primary" onClick=${resetAll}>清空全部</${Btn}>
+            </div>
+          </div>
+
+          <div class="mt-4 flex flex-wrap gap-2">
+            ${tabs.map(t => html`
+              <button
+                onClick=${()=>setTab(t.key)}
+                class=${"px-3 py-2 rounded-lg text-sm font-medium border transition " + (tab===t.key
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50")}>
+                ${t.name}
+              </button>
+            `)}
+          </div>
+
+          <div class="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div class="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-4">
+              <div class="font-semibold text-slate-900">新增记录</div>
+              <div class="text-xs text-slate-500 mt-1">当前模块：${tab}</div>
+
+              <div class="mt-4 space-y-3">
+                <${Field} label="客户 Customer" value=${customer} setValue=${setCustomer} placeholder="例如：Carrefour / Hotel XYZ" />
+                <${Field} label="产品 Items（可直接粘贴多行）" value=${items} setValue=${setItems} placeholder="例如：Tissue 2ply / Wet wipes..." />
+                <${Field} label="金额 Amount（数字）" value=${amount} setValue=${setAmount} placeholder="例如：1250" />
+                <${Field} label="备注 Note" value=${note} setValue=${setNote} placeholder="例如：WhatsApp 跟进 / 交期..." />
+
+                <${Btn}
+                  variant="primary"
+                  disabled=${!customer.trim()}
+                  onClick=${addRecord}
+                >保存到 ${tab}</${Btn}>
+              </div>
+
+              <div class="mt-4 text-xs text-slate-500">
+                数据键：<code class="bg-slate-100 px-1 rounded">${APP_ID}</code><br/>
+                更新时间：${state?.meta?.updatedAt || "-"}
+              </div>
+            </div>
+
+            <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-4">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-semibold text-slate-900">历史记录</div>
+                <div class="text-sm text-slate-600">${list.length} 条</div>
+              </div>
+
+              <div class="mt-3 divide-y divide-slate-100">
+                ${list.length === 0 ? html`
+                  <div class="py-12 text-center text-slate-500">
+                    暂无记录。左侧新增一条试试。
+                  </div>
+                ` : list.map(row => html`
+                  <div class="py-3 flex gap-3">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <div class="font-semibold text-slate-900 truncate">${row.customer || "-"}</div>
+                        <${Pill}>${row.id}</${Pill}>
+                        <span class="text-xs text-slate-500">${row.createdAt}</span>
+                      </div>
+                      <div class="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words">${row.itemsText || ""}</div>
+                      <div class="mt-2 flex items-center gap-3 text-sm">
+                        <div class="font-semibold text-slate-900">AED ${Number(row.amount || 0).toLocaleString()}</div>
+                        ${row.note ? html`<div class="text-slate-600">备注：${row.note}</div>` : null}
+                      </div>
+                    </div>
+
+                    <div class="shrink-0">
+                      <${Btn} variant="ghost" onClick=${()=>removeRecord(row.id)}>删除</${Btn}>
+                    </div>
+                  </div>
+                `)}
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6 text-xs text-slate-500">
+            说明：这是“静态可运行”的最小可用版本，用于你先把 <b>Pages 站点跑通</b>，后续我们再把 PI/订单下载、历史筛选、字段结构逐步加回来（不动你现有数据结构也行）。
+          </div>
+        </div>
+      `;
+    }
+
+    render(html`<${App} />`, document.getElementById("app"));
   </script>
 </body>
 </html>
