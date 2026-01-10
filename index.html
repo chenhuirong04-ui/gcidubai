@@ -3,276 +3,861 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>iCare 管家婆 · Bookkeeping</title>
-
-  <!-- Tailwind CDN（纯静态可用） -->
+  <title>iCare 管家婆（报价 / PI / 订单 / 收款 / 冲账 / 流水）</title>
   <script src="https://cdn.tailwindcss.com"></script>
-
   <style>
-    html, body { height: 100%; }
+    html,body{height:100%}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;}
   </style>
 </head>
-
-<body class="min-h-full bg-slate-50">
-  <div id="app" class="min-h-screen"></div>
-
-  <script type="module">
-    import { h, render } from "https://esm.sh/preact@10.19.6";
-    import { useEffect, useMemo, useState } from "https://esm.sh/preact@10.19.6/hooks";
-    import htm from "https://esm.sh/htm@3.1.1";
-    const html = htm.bind(h);
-
-    // ========= 轻量持久化（localStorage）=========
-    const APP_ID = "icare_bookkeeping_v1";
-    const nowISO = () => new Date().toISOString();
-
-    function safeParse(json, fallback) {
-      try { return JSON.parse(json); } catch { return fallback; }
-    }
-
-    function loadState() {
-      const raw = localStorage.getItem(APP_ID);
-      const s = safeParse(raw, null);
-      if (s && typeof s === "object") return s;
-      return {
-        meta: { app: "iCare Bookkeeping", version: 1, createdAt: nowISO(), updatedAt: nowISO() },
-        quotes: [],
-        orders: [],
-        receipts: []
-      };
-    }
-
-    function saveState(state) {
-      const next = {
-        ...state,
-        meta: { ...state.meta, updatedAt: nowISO() }
-      };
-      localStorage.setItem(APP_ID, JSON.stringify(next));
-      return next;
-    }
-
-    function uid(prefix="ID") {
-      return prefix + "_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
-    }
-
-    // ========= 通用小组件 =========
-    function Pill({ children }) {
-      return html`<span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">${children}</span>`;
-    }
-
-    function Btn({ onClick, variant="primary", children, disabled=false }) {
-      const cls =
-        variant === "primary"
-          ? "bg-indigo-600 hover:bg-indigo-700 text-white"
-          : variant === "ghost"
-          ? "bg-white hover:bg-slate-50 text-slate-900 border border-slate-200"
-          : "bg-slate-900 hover:bg-slate-800 text-white";
-      return html`
-        <button
-          disabled=${disabled}
-          onClick=${onClick}
-          class="px-3 py-2 rounded-lg text-sm font-medium transition ${cls} disabled:opacity-50 disabled:cursor-not-allowed">
-          ${children}
-        </button>
-      `;
-    }
-
-    function Field({ label, value, setValue, placeholder="" }) {
-      return html`
-        <label class="block">
-          <div class="text-xs text-slate-600 mb-1">${label}</div>
-          <input
-            class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200"
-            value=${value}
-            placeholder=${placeholder}
-            onInput=${(e)=>setValue(e.target.value)}
-          />
+<body class="bg-slate-50">
+  <div class="max-w-6xl mx-auto px-4 py-6">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold">iCare 管家婆</h1>
+        <p class="text-slate-600 mt-1">报价 / PI / 订单 / 收款 / 冲账 / 每日流水 / 导出（本地持久化）</p>
+      </div>
+      <div class="flex gap-2">
+        <button id="btnBackup" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出备份(JSON)</button>
+        <label class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50 cursor-pointer">
+          导入备份(JSON)
+          <input id="fileRestore" type="file" accept="application/json" class="hidden"/>
         </label>
-      `;
-    }
+        <button id="btnReset" class="px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700">清空数据</button>
+      </div>
+    </div>
 
-    function downloadText(filename, text, mime="application/json") {
-      const blob = new Blob([text], { type: mime });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }
+    <div class="mt-5 bg-white border rounded-2xl shadow-sm overflow-hidden">
+      <div class="flex flex-wrap gap-2 p-3 border-b bg-slate-50">
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="pi">报价/PI</button>
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="orders">订单</button>
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="payments">收款</button>
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="offsets">冲账</button>
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="ledger">每日流水</button>
+        <button class="tab px-3 py-2 rounded-lg bg-white border" data-tab="history">历史/搜索</button>
+      </div>
 
-    // ========= 主应用 =========
-    function App() {
-      const [state, setState] = useState(loadState());
-      const [tab, setTab] = useState("quotes");
+      <div class="p-4">
+        <!-- PI -->
+        <section id="tab-pi" class="tabpage hidden">
+          <div class="grid md:grid-cols-3 gap-4">
+            <div class="md:col-span-1">
+              <h2 class="font-semibold text-lg">新增报价/PI</h2>
+              <p class="text-sm text-slate-500 mt-1">最少录：客户、币种、总额。其余可后补。</p>
 
-      // 表单
-      const [customer, setCustomer] = useState("");
-      const [items, setItems] = useState("");
-      const [amount, setAmount] = useState("");
-      const [note, setNote] = useState("");
+              <div class="mt-3 space-y-2">
+                <input id="piCustomer" class="w-full border rounded-lg px-3 py-2" placeholder="客户名 / Customer"/>
+                <input id="piRef" class="w-full border rounded-lg px-3 py-2" placeholder="PI号/参考号 (可空)"/>
+                <div class="flex gap-2">
+                  <select id="piCurrency" class="w-40 border rounded-lg px-3 py-2">
+                    <option value="AED">AED</option>
+                    <option value="USD">USD</option>
+                    <option value="CNY">CNY</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                  <input id="piTotal" type="number" step="0.01" class="flex-1 border rounded-lg px-3 py-2" placeholder="总额 Total"/>
+                </div>
+                <input id="piDate" type="date" class="w-full border rounded-lg px-3 py-2"/>
+                <textarea id="piNote" class="w-full border rounded-lg px-3 py-2" rows="3" placeholder="备注（产品、条款等）"></textarea>
 
-      useEffect(() => {
-        // 首次加载后写回 meta 更新时间，保证一致
-        setState(prev => saveState(prev));
-      }, []);
-
-      const list = useMemo(() => state[tab] || [], [state, tab]);
-
-      function addRecord() {
-        const amt = Number(amount || 0);
-        const record = {
-          id: uid(tab.toUpperCase().slice(0,3)),
-          createdAt: nowISO(),
-          customer: customer.trim(),
-          itemsText: items.trim(),
-          amount: isFinite(amt) ? amt : 0,
-          note: note.trim()
-        };
-        const next = {
-          ...state,
-          [tab]: [record, ...(state[tab] || [])]
-        };
-        const saved = saveState(next);
-        setState(saved);
-
-        // reset
-        setCustomer("");
-        setItems("");
-        setAmount("");
-        setNote("");
-      }
-
-      function removeRecord(id) {
-        const next = {
-          ...state,
-          [tab]: (state[tab] || []).filter(x => x.id !== id)
-        };
-        setState(saveState(next));
-      }
-
-      function exportAll() {
-        downloadText(`icare-bookkeeping-export-${Date.now()}.json`, JSON.stringify(state, null, 2));
-      }
-
-      function exportCurrentTab() {
-        downloadText(`icare-${tab}-export-${Date.now()}.json`, JSON.stringify(list, null, 2));
-      }
-
-      function resetAll() {
-        if (!confirm("确定要清空全部数据吗？此操作不可恢复。")) return;
-        const cleared = {
-          meta: { app: "iCare Bookkeeping", version: 1, createdAt: nowISO(), updatedAt: nowISO() },
-          quotes: [], orders: [], receipts: []
-        };
-        localStorage.setItem(APP_ID, JSON.stringify(cleared));
-        setState(cleared);
-      }
-
-      const tabs = [
-        { key: "quotes", name: "报价 Quotes" },
-        { key: "orders", name: "订单 Orders" },
-        { key: "receipts", name: "收款 Receipts" }
-      ];
-
-      return html`
-        <div class="max-w-6xl mx-auto p-4 md:p-6">
-          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <div class="text-2xl font-bold text-slate-900">iCare 管家婆</div>
-              <div class="text-sm text-slate-600 mt-1">
-                纯静态版本（GitHub Pages 可运行） · <${Pill}>本地持久化 localStorage</${Pill}>
+                <button id="btnAddPI" class="w-full px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+                  保存 PI
+                </button>
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <${Btn} variant="ghost" onClick=${exportCurrentTab}>导出当前页</${Btn}>
-              <${Btn} variant="ghost" onClick=${exportAll}>导出全部</${Btn}>
-              <${Btn} variant="primary" onClick=${resetAll}>清空全部</${Btn}>
-            </div>
-          </div>
-
-          <div class="mt-4 flex flex-wrap gap-2">
-            ${tabs.map(t => html`
-              <button
-                onClick=${()=>setTab(t.key)}
-                class=${"px-3 py-2 rounded-lg text-sm font-medium border transition " + (tab===t.key
-                  ? "bg-slate-900 text-white border-slate-900"
-                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50")}>
-                ${t.name}
-              </button>
-            `)}
-          </div>
-
-          <div class="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div class="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-4">
-              <div class="font-semibold text-slate-900">新增记录</div>
-              <div class="text-xs text-slate-500 mt-1">当前模块：${tab}</div>
-
-              <div class="mt-4 space-y-3">
-                <${Field} label="客户 Customer" value=${customer} setValue=${setCustomer} placeholder="例如：Carrefour / Hotel XYZ" />
-                <${Field} label="产品 Items（可直接粘贴多行）" value=${items} setValue=${setItems} placeholder="例如：Tissue 2ply / Wet wipes..." />
-                <${Field} label="金额 Amount（数字）" value=${amount} setValue=${setAmount} placeholder="例如：1250" />
-                <${Field} label="备注 Note" value=${note} setValue=${setNote} placeholder="例如：WhatsApp 跟进 / 交期..." />
-
-                <${Btn}
-                  variant="primary"
-                  disabled=${!customer.trim()}
-                  onClick=${addRecord}
-                >保存到 ${tab}</${Btn}>
-              </div>
-
-              <div class="mt-4 text-xs text-slate-500">
-                数据键：<code class="bg-slate-100 px-1 rounded">${APP_ID}</code><br/>
-                更新时间：${state?.meta?.updatedAt || "-"}
-              </div>
-            </div>
-
-            <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-4">
+            <div class="md:col-span-2">
               <div class="flex items-center justify-between gap-2">
-                <div class="font-semibold text-slate-900">历史记录</div>
-                <div class="text-sm text-slate-600">${list.length} 条</div>
+                <h2 class="font-semibold text-lg">PI 列表</h2>
+                <div class="flex gap-2">
+                  <input id="piSearch" class="border rounded-lg px-3 py-2" placeholder="搜索 客户/PI号"/>
+                  <button id="btnExportPIcsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出PI CSV</button>
+                </div>
               </div>
 
-              <div class="mt-3 divide-y divide-slate-100">
-                ${list.length === 0 ? html`
-                  <div class="py-12 text-center text-slate-500">
-                    暂无记录。左侧新增一条试试。
-                  </div>
-                ` : list.map(row => html`
-                  <div class="py-3 flex gap-3">
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <div class="font-semibold text-slate-900 truncate">${row.customer || "-"}</div>
-                        <${Pill}>${row.id}</${Pill}>
-                        <span class="text-xs text-slate-500">${row.createdAt}</span>
-                      </div>
-                      <div class="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words">${row.itemsText || ""}</div>
-                      <div class="mt-2 flex items-center gap-3 text-sm">
-                        <div class="font-semibold text-slate-900">AED ${Number(row.amount || 0).toLocaleString()}</div>
-                        ${row.note ? html`<div class="text-slate-600">备注：${row.note}</div>` : null}
-                      </div>
-                    </div>
-
-                    <div class="shrink-0">
-                      <${Btn} variant="ghost" onClick=${()=>removeRecord(row.id)}>删除</${Btn}>
-                    </div>
-                  </div>
-                `)}
+              <div class="mt-3 overflow-auto border rounded-xl">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th class="text-left p-2">日期</th>
+                      <th class="text-left p-2">客户</th>
+                      <th class="text-left p-2">PI号</th>
+                      <th class="text-left p-2">币种</th>
+                      <th class="text-right p-2">总额</th>
+                      <th class="text-left p-2">状态</th>
+                      <th class="text-right p-2">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="piTbody"></tbody>
+                </table>
               </div>
+
+              <p class="text-xs text-slate-500 mt-2">提示：PI 可“一键生成订单”。订单可收款、冲账，流水自动汇总。</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Orders -->
+        <section id="tab-orders" class="tabpage hidden">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="font-semibold text-lg">订单</h2>
+            <div class="flex gap-2">
+              <input id="orderSearch" class="border rounded-lg px-3 py-2" placeholder="搜索 客户/订单号/PI号"/>
+              <button id="btnExportOrdersCsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出订单 CSV</button>
             </div>
           </div>
 
-          <div class="mt-6 text-xs text-slate-500">
-            说明：这是“静态可运行”的最小可用版本，用于你先把 <b>Pages 站点跑通</b>，后续我们再把 PI/订单下载、历史筛选、字段结构逐步加回来（不动你现有数据结构也行）。
+          <div class="mt-3 overflow-auto border rounded-xl">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="text-left p-2">日期</th>
+                  <th class="text-left p-2">订单号</th>
+                  <th class="text-left p-2">客户</th>
+                  <th class="text-left p-2">关联PI</th>
+                  <th class="text-left p-2">币种</th>
+                  <th class="text-right p-2">订单额</th>
+                  <th class="text-right p-2">已收</th>
+                  <th class="text-right p-2">未收</th>
+                  <th class="text-left p-2">状态</th>
+                  <th class="text-right p-2">操作</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTbody"></tbody>
+            </table>
           </div>
-        </div>
-      `;
-    }
+        </section>
 
-    render(html`<${App} />`, document.getElementById("app"));
-  </script>
+        <!-- Payments -->
+        <section id="tab-payments" class="tabpage hidden">
+          <div class="grid md:grid-cols-3 gap-4">
+            <div class="md:col-span-1">
+              <h2 class="font-semibold text-lg">新增收款</h2>
+              <p class="text-sm text-slate-500 mt-1">先选订单，再录金额。可多次收款。</p>
+
+              <div class="mt-3 space-y-2">
+                <select id="payOrderId" class="w-full border rounded-lg px-3 py-2"></select>
+                <div class="flex gap-2">
+                  <input id="payAmount" type="number" step="0.01" class="flex-1 border rounded-lg px-3 py-2" placeholder="收款金额"/>
+                  <input id="payDate" type="date" class="w-44 border rounded-lg px-3 py-2"/>
+                </div>
+                <input id="payMethod" class="w-full border rounded-lg px-3 py-2" placeholder="方式：现金/转账/刷卡…"/>
+                <textarea id="payNote" class="w-full border rounded-lg px-3 py-2" rows="3" placeholder="备注（银行、参考号等）"></textarea>
+                <button id="btnAddPayment" class="w-full px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+                  保存收款
+                </button>
+              </div>
+            </div>
+
+            <div class="md:col-span-2">
+              <div class="flex items-center justify-between gap-2">
+                <h2 class="font-semibold text-lg">收款记录</h2>
+                <div class="flex gap-2">
+                  <input id="paySearch" class="border rounded-lg px-3 py-2" placeholder="搜索 客户/订单号"/>
+                  <button id="btnExportPayCsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出收款 CSV</button>
+                </div>
+              </div>
+
+              <div class="mt-3 overflow-auto border rounded-xl">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th class="text-left p-2">日期</th>
+                      <th class="text-left p-2">订单号</th>
+                      <th class="text-left p-2">客户</th>
+                      <th class="text-left p-2">方式</th>
+                      <th class="text-right p-2">金额</th>
+                      <th class="text-left p-2">备注</th>
+                      <th class="text-right p-2">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="payTbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Offsets -->
+        <section id="tab-offsets" class="tabpage hidden">
+          <div class="grid md:grid-cols-3 gap-4">
+            <div class="md:col-span-1">
+              <h2 class="font-semibold text-lg">新增冲账</h2>
+              <p class="text-sm text-slate-500 mt-1">用于“收款→冲账到具体订单”。</p>
+
+              <div class="mt-3 space-y-2">
+                <select id="offOrderId" class="w-full border rounded-lg px-3 py-2"></select>
+                <div class="flex gap-2">
+                  <input id="offAmount" type="number" step="0.01" class="flex-1 border rounded-lg px-3 py-2" placeholder="冲账金额"/>
+                  <input id="offDate" type="date" class="w-44 border rounded-lg px-3 py-2"/>
+                </div>
+                <input id="offRef" class="w-full border rounded-lg px-3 py-2" placeholder="关联收款参考（可空）"/>
+                <textarea id="offNote" class="w-full border rounded-lg px-3 py-2" rows="3" placeholder="备注"></textarea>
+                <button id="btnAddOffset" class="w-full px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+                  保存冲账
+                </button>
+              </div>
+            </div>
+
+            <div class="md:col-span-2">
+              <div class="flex items-center justify-between gap-2">
+                <h2 class="font-semibold text-lg">冲账记录</h2>
+                <div class="flex gap-2">
+                  <input id="offSearch" class="border rounded-lg px-3 py-2" placeholder="搜索 客户/订单号"/>
+                  <button id="btnExportOffCsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出冲账 CSV</button>
+                </div>
+              </div>
+
+              <div class="mt-3 overflow-auto border rounded-xl">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th class="text-left p-2">日期</th>
+                      <th class="text-left p-2">订单号</th>
+                      <th class="text-left p-2">客户</th>
+                      <th class="text-right p-2">金额</th>
+                      <th class="text-left p-2">参考</th>
+                      <th class="text-left p-2">备注</th>
+                      <th class="text-right p-2">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="offTbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Ledger -->
+        <section id="tab-ledger" class="tabpage hidden">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 class="font-semibold text-lg">每日流水（自动汇总）</h2>
+              <p class="text-sm text-slate-500 mt-1">依据“收款 + 冲账”生成汇总视图（可导出）。</p>
+            </div>
+            <div class="flex gap-2">
+              <input id="ledgerFrom" type="date" class="border rounded-lg px-3 py-2"/>
+              <input id="ledgerTo" type="date" class="border rounded-lg px-3 py-2"/>
+              <button id="btnLedgerCsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出流水 CSV</button>
+            </div>
+          </div>
+
+          <div class="mt-3 overflow-auto border rounded-xl">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-50 text-slate-600">
+                <tr>
+                  <th class="text-left p-2">日期</th>
+                  <th class="text-left p-2">币种</th>
+                  <th class="text-right p-2">收款合计</th>
+                  <th class="text-right p-2">冲账合计</th>
+                  <th class="text-right p-2">净额（收-冲）</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerTbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- History -->
+        <section id="tab-history" class="tabpage hidden">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 class="font-semibold text-lg">历史 / 搜索</h2>
+              <p class="text-sm text-slate-500 mt-1">一键搜索客户，查看 PI/订单/收款/冲账全链路。</p>
+            </div>
+            <div class="flex gap-2">
+              <input id="hisQ" class="border rounded-lg px-3 py-2" placeholder="输入客户名关键字"/>
+              <button id="btnHisSearch" class="px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">搜索</button>
+              <button id="btnHisCsv" class="px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">导出搜索结果CSV</button>
+            </div>
+          </div>
+
+          <div id="hisBox" class="mt-4 grid md:grid-cols-2 gap-4"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="mt-4 text-xs text-slate-500">
+      存储：浏览器本地 localStorage（同一台电脑同一浏览器有效）。建议定期点“导出备份(JSON)”保存到电脑。
+    </div>
+  </div>
+
+<script>
+/** =========================
+ *  iCare Bookkeeping (Static)
+ *  - No build, no React
+ *  - LocalStorage persistence
+ * ========================= */
+
+const APP_ID = "icar_bookkeeping";
+const LS_KEY = APP_ID + "::db";
+
+const $ = (id) => document.getElementById(id);
+const fmt2 = (n) => (Math.round((Number(n)||0)*100)/100).toFixed(2);
+const uid = () => Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(2,7);
+const today = () => new Date().toISOString().slice(0,10);
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return seedDB();
+    const db = JSON.parse(raw);
+    if(!db || !db.pis) return seedDB();
+    return db;
+  }catch(e){
+    return seedDB();
+  }
+}
+function saveDB(){
+  localStorage.setItem(LS_KEY, JSON.stringify(DB));
+  renderAll();
+}
+function seedDB(){
+  return {
+    version: 1,
+    pis: [],
+    orders: [],
+    payments: [],
+    offsets: []
+  };
+}
+
+let DB = loadDB();
+
+/** ====== Derivations ====== */
+function orderPaidAmount(orderId){
+  // paid = sum(payments for this order) - sum(offsets for this order)? 这里按你们习惯：收款是实际到账记录；冲账是“分配/核销”
+  const paid = DB.payments.filter(p=>p.orderId===orderId).reduce((a,b)=>a+Number(b.amount||0),0);
+  const off = DB.offsets.filter(o=>o.orderId===orderId).reduce((a,b)=>a+Number(b.amount||0),0);
+  // 你也可以改成：未冲账的不算已收。这里先用“冲账代表已核销”
+  return { paidRaw: paid, offset: off, recognized: off };
+}
+function orderStatus(order){
+  const { recognized } = orderPaidAmount(order.id);
+  const total = Number(order.total||0);
+  if(total<=0) return "异常";
+  if(recognized<=0) return "未收";
+  if(recognized + 0.0001 < total) return "部分收款";
+  return "已结清";
+}
+
+function ensureDateInputs(){
+  if(!$("piDate").value) $("piDate").value = today();
+  if(!$("payDate").value) $("payDate").value = today();
+  if(!$("offDate").value) $("offDate").value = today();
+  if(!$("ledgerFrom").value) $("ledgerFrom").value = "";
+  if(!$("ledgerTo").value) $("ledgerTo").value = "";
+}
+
+/** ====== Tabs ====== */
+function setTab(name){
+  document.querySelectorAll(".tabpage").forEach(el=>el.classList.add("hidden"));
+  document.querySelectorAll(".tab").forEach(el=>el.classList.remove("bg-slate-900","text-white","border-slate-900"));
+  const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if(btn){
+    btn.classList.add("bg-slate-900","text-white","border-slate-900");
+  }
+  const page = $("tab-"+name);
+  if(page) page.classList.remove("hidden");
+  localStorage.setItem(APP_ID+"::tab", name);
+}
+
+document.querySelectorAll(".tab").forEach(b=>{
+  b.addEventListener("click", ()=>setTab(b.dataset.tab));
+});
+
+/** ====== CRUD ====== */
+// PI
+$("btnAddPI").addEventListener("click", ()=>{
+  const customer = $("piCustomer").value.trim();
+  const currency = $("piCurrency").value;
+  const total = Number($("piTotal").value||0);
+  if(!customer){ alert("请填写客户名"); return; }
+  if(!(total>0)){ alert("请填写总额（>0）"); return; }
+
+  DB.pis.unshift({
+    id: uid(),
+    date: $("piDate").value || today(),
+    customer,
+    ref: $("piRef").value.trim(),
+    currency,
+    total: total,
+    note: $("piNote").value.trim(),
+    status: "已创建"
+  });
+
+  $("piCustomer").value = "";
+  $("piRef").value = "";
+  $("piTotal").value = "";
+  $("piNote").value = "";
+  saveDB();
+});
+
+function createOrderFromPI(piId){
+  const pi = DB.pis.find(x=>x.id===piId);
+  if(!pi) return;
+  const orderNo = "SO-" + new Date().toISOString().slice(0,10).replaceAll("-","") + "-" + Math.floor(Math.random()*900+100);
+  DB.orders.unshift({
+    id: uid(),
+    date: today(),
+    orderNo,
+    customer: pi.customer,
+    piId: pi.id,
+    piRef: pi.ref,
+    currency: pi.currency,
+    total: Number(pi.total||0),
+    note: (pi.note||""),
+  });
+  pi.status = "已转订单";
+  saveDB();
+  setTab("orders");
+}
+
+function deleteById(listName, id){
+  if(!confirm("确定删除？")) return;
+  DB[listName] = DB[listName].filter(x=>x.id!==id);
+  saveDB();
+}
+
+// Payments
+$("btnAddPayment").addEventListener("click", ()=>{
+  const orderId = $("payOrderId").value;
+  const amount = Number($("payAmount").value||0);
+  const date = $("payDate").value || today();
+  if(!orderId){ alert("请选择订单"); return; }
+  if(!(amount>0)){ alert("收款金额必须 > 0"); return; }
+  const order = DB.orders.find(o=>o.id===orderId);
+  if(!order){ alert("订单不存在"); return; }
+
+  DB.payments.unshift({
+    id: uid(),
+    date,
+    orderId,
+    orderNo: order.orderNo,
+    customer: order.customer,
+    currency: order.currency,
+    amount,
+    method: $("payMethod").value.trim(),
+    note: $("payNote").value.trim()
+  });
+
+  $("payAmount").value="";
+  $("payMethod").value="";
+  $("payNote").value="";
+  saveDB();
+});
+
+// Offsets
+$("btnAddOffset").addEventListener("click", ()=>{
+  const orderId = $("offOrderId").value;
+  const amount = Number($("offAmount").value||0);
+  const date = $("offDate").value || today();
+  if(!orderId){ alert("请选择订单"); return; }
+  if(!(amount>0)){ alert("冲账金额必须 > 0"); return; }
+  const order = DB.orders.find(o=>o.id===orderId);
+  if(!order){ alert("订单不存在"); return; }
+
+  DB.offsets.unshift({
+    id: uid(),
+    date,
+    orderId,
+    orderNo: order.orderNo,
+    customer: order.customer,
+    currency: order.currency,
+    amount,
+    ref: $("offRef").value.trim(),
+    note: $("offNote").value.trim()
+  });
+
+  $("offAmount").value="";
+  $("offRef").value="";
+  $("offNote").value="";
+  saveDB();
+});
+
+/** ====== Render ====== */
+function renderPI(){
+  const q = ($("piSearch").value||"").trim().toLowerCase();
+  const rows = DB.pis.filter(x=>{
+    if(!q) return true;
+    return (x.customer||"").toLowerCase().includes(q) || (x.ref||"").toLowerCase().includes(q);
+  }).map(pi=>{
+    const tr = document.createElement("tr");
+    tr.className = "border-t";
+    tr.innerHTML = `
+      <td class="p-2 whitespace-nowrap">${pi.date||""}</td>
+      <td class="p-2">${escapeHTML(pi.customer||"")}</td>
+      <td class="p-2 mono">${escapeHTML(pi.ref||"")}</td>
+      <td class="p-2">${pi.currency||""}</td>
+      <td class="p-2 text-right mono">${fmt2(pi.total||0)}</td>
+      <td class="p-2">${escapeHTML(pi.status||"")}</td>
+      <td class="p-2 text-right whitespace-nowrap">
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-act="toOrder" data-id="${pi.id}">转订单</button>
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-act="delPI" data-id="${pi.id}">删除</button>
+      </td>
+    `;
+    return tr;
+  });
+
+  const tb = $("piTbody");
+  tb.innerHTML = "";
+  rows.forEach(r=>tb.appendChild(r));
+
+  tb.querySelectorAll("button[data-act]").forEach(btn=>{
+    const id = btn.dataset.id;
+    const act = btn.dataset.act;
+    btn.addEventListener("click", ()=>{
+      if(act==="toOrder") createOrderFromPI(id);
+      if(act==="delPI") deleteById("pis", id);
+    });
+  });
+}
+
+function renderOrders(){
+  const q = ($("orderSearch").value||"").trim().toLowerCase();
+  const rows = DB.orders.filter(o=>{
+    if(!q) return true;
+    return (o.customer||"").toLowerCase().includes(q) ||
+           (o.orderNo||"").toLowerCase().includes(q) ||
+           (o.piRef||"").toLowerCase().includes(q);
+  }).map(o=>{
+    const paid = orderPaidAmount(o.id);
+    const due = Number(o.total||0) - Number(paid.recognized||0);
+    const st = orderStatus(o);
+    const tr = document.createElement("tr");
+    tr.className = "border-t";
+    tr.innerHTML = `
+      <td class="p-2 whitespace-nowrap">${o.date||""}</td>
+      <td class="p-2 mono">${escapeHTML(o.orderNo||"")}</td>
+      <td class="p-2">${escapeHTML(o.customer||"")}</td>
+      <td class="p-2 mono">${escapeHTML(o.piRef||"")}</td>
+      <td class="p-2">${o.currency||""}</td>
+      <td class="p-2 text-right mono">${fmt2(o.total||0)}</td>
+      <td class="p-2 text-right mono">${fmt2(paid.recognized||0)}</td>
+      <td class="p-2 text-right mono">${fmt2(due||0)}</td>
+      <td class="p-2">${st}</td>
+      <td class="p-2 text-right whitespace-nowrap">
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-act="goPay" data-id="${o.id}">去收款</button>
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-act="goOff" data-id="${o.id}">去冲账</button>
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-act="delOrder" data-id="${o.id}">删除</button>
+      </td>
+    `;
+    return tr;
+  });
+
+  const tb = $("ordersTbody");
+  tb.innerHTML = "";
+  rows.forEach(r=>tb.appendChild(r));
+
+  tb.querySelectorAll("button[data-act]").forEach(btn=>{
+    const id = btn.dataset.id;
+    const act = btn.dataset.act;
+    btn.addEventListener("click", ()=>{
+      if(act==="goPay"){ setTab("payments"); $("payOrderId").value = id; }
+      if(act==="goOff"){ setTab("offsets"); $("offOrderId").value = id; }
+      if(act==="delOrder") deleteById("orders", id);
+    });
+  });
+}
+
+function renderPayments(){
+  const q = ($("paySearch").value||"").trim().toLowerCase();
+  const rows = DB.payments.filter(p=>{
+    if(!q) return true;
+    return (p.customer||"").toLowerCase().includes(q) || (p.orderNo||"").toLowerCase().includes(q);
+  }).map(p=>{
+    const tr = document.createElement("tr");
+    tr.className = "border-t";
+    tr.innerHTML = `
+      <td class="p-2 whitespace-nowrap">${p.date||""}</td>
+      <td class="p-2 mono">${escapeHTML(p.orderNo||"")}</td>
+      <td class="p-2">${escapeHTML(p.customer||"")}</td>
+      <td class="p-2">${escapeHTML(p.method||"")}</td>
+      <td class="p-2 text-right mono">${fmt2(p.amount||0)} ${escapeHTML(p.currency||"")}</td>
+      <td class="p-2">${escapeHTML(p.note||"")}</td>
+      <td class="p-2 text-right">
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-id="${p.id}">删除</button>
+      </td>
+    `;
+    return tr;
+  });
+
+  const tb = $("payTbody");
+  tb.innerHTML = "";
+  rows.forEach(r=>tb.appendChild(r));
+
+  tb.querySelectorAll("button[data-id]").forEach(btn=>{
+    btn.addEventListener("click", ()=>deleteById("payments", btn.dataset.id));
+  });
+}
+
+function renderOffsets(){
+  const q = ($("offSearch").value||"").trim().toLowerCase();
+  const rows = DB.offsets.filter(o=>{
+    if(!q) return true;
+    return (o.customer||"").toLowerCase().includes(q) || (o.orderNo||"").toLowerCase().includes(q);
+  }).map(o=>{
+    const tr = document.createElement("tr");
+    tr.className = "border-t";
+    tr.innerHTML = `
+      <td class="p-2 whitespace-nowrap">${o.date||""}</td>
+      <td class="p-2 mono">${escapeHTML(o.orderNo||"")}</td>
+      <td class="p-2">${escapeHTML(o.customer||"")}</td>
+      <td class="p-2 text-right mono">${fmt2(o.amount||0)} ${escapeHTML(o.currency||"")}</td>
+      <td class="p-2 mono">${escapeHTML(o.ref||"")}</td>
+      <td class="p-2">${escapeHTML(o.note||"")}</td>
+      <td class="p-2 text-right">
+        <button class="px-2 py-1 rounded border bg-white hover:bg-slate-50" data-id="${o.id}">删除</button>
+      </td>
+    `;
+    return tr;
+  });
+
+  const tb = $("offTbody");
+  tb.innerHTML = "";
+  rows.forEach(r=>tb.appendChild(r));
+
+  tb.querySelectorAll("button[data-id]").forEach(btn=>{
+    btn.addEventListener("click", ()=>deleteById("offsets", btn.dataset.id));
+  });
+}
+
+function buildLedgerRows(){
+  // 汇总：payments 与 offsets 按 date+currency
+  const from = $("ledgerFrom").value || "0000-01-01";
+  const to = $("ledgerTo").value || "9999-12-31";
+
+  const key = (d,c)=>`${d}__${c}`;
+  const map = new Map();
+
+  for(const p of DB.payments){
+    if(p.date < from || p.date > to) continue;
+    const k = key(p.date, p.currency);
+    const cur = map.get(k) || { date:p.date, currency:p.currency, pay:0, off:0 };
+    cur.pay += Number(p.amount||0);
+    map.set(k, cur);
+  }
+  for(const o of DB.offsets){
+    if(o.date < from || o.date > to) continue;
+    const k = key(o.date, o.currency);
+    const cur = map.get(k) || { date:o.date, currency:o.currency, pay:0, off:0 };
+    cur.off += Number(o.amount||0);
+    map.set(k, cur);
+  }
+
+  return Array.from(map.values()).sort((a,b)=> (a.date===b.date? a.currency.localeCompare(b.currency): a.date.localeCompare(b.date)));
+}
+
+function renderLedger(){
+  const rows = buildLedgerRows();
+  const tb = $("ledgerTbody");
+  tb.innerHTML = "";
+  for(const r of rows){
+    const net = Number(r.pay||0) - Number(r.off||0);
+    const tr = document.createElement("tr");
+    tr.className = "border-t";
+    tr.innerHTML = `
+      <td class="p-2 whitespace-nowrap">${r.date}</td>
+      <td class="p-2">${r.currency}</td>
+      <td class="p-2 text-right mono">${fmt2(r.pay)}</td>
+      <td class="p-2 text-right mono">${fmt2(r.off)}</td>
+      <td class="p-2 text-right mono">${fmt2(net)}</td>
+    `;
+    tb.appendChild(tr);
+  }
+}
+
+function renderHistory(){
+  const q = ($("hisQ").value||"").trim().toLowerCase();
+  const box = $("hisBox");
+  box.innerHTML = "";
+  if(!q){
+    box.innerHTML = `<div class="text-sm text-slate-500">输入客户名关键字后点“搜索”。</div>`;
+    return;
+  }
+  const pis = DB.pis.filter(x=>(x.customer||"").toLowerCase().includes(q));
+  const orders = DB.orders.filter(x=>(x.customer||"").toLowerCase().includes(q));
+  const pays = DB.payments.filter(x=>(x.customer||"").toLowerCase().includes(q));
+  const offs = DB.offsets.filter(x=>(x.customer||"").toLowerCase().includes(q));
+
+  box.appendChild(card("PI", pis.map(x=>`${x.date} | ${x.customer} | ${x.ref||"(无PI号)"} | ${x.currency} ${fmt2(x.total)} | ${x.status}`).join("\n") || "无"));
+  box.appendChild(card("订单", orders.map(x=>{
+    const paid = orderPaidAmount(x.id).recognized;
+    const due = Number(x.total||0) - paid;
+    return `${x.date} | ${x.orderNo} | ${x.customer} | ${x.currency} ${fmt2(x.total)} | 已收(冲账) ${fmt2(paid)} | 未收 ${fmt2(due)} | ${orderStatus(x)}`;
+  }).join("\n") || "无"));
+  box.appendChild(card("收款", pays.map(x=>`${x.date} | ${x.orderNo} | ${x.customer} | ${x.currency} ${fmt2(x.amount)} | ${x.method||""} | ${x.note||""}`).join("\n") || "无"));
+  box.appendChild(card("冲账", offs.map(x=>`${x.date} | ${x.orderNo} | ${x.customer} | ${x.currency} ${fmt2(x.amount)} | ${x.ref||""} | ${x.note||""}`).join("\n") || "无"));
+}
+
+function card(title, text){
+  const div = document.createElement("div");
+  div.className = "border rounded-2xl p-3 bg-white";
+  div.innerHTML = `
+    <div class="font-semibold">${escapeHTML(title)}</div>
+    <pre class="mt-2 text-xs whitespace-pre-wrap bg-slate-50 border rounded-xl p-2 mono">${escapeHTML(text)}</pre>
+  `;
+  return div;
+}
+
+function renderSelectors(){
+  // order selectors
+  const opts = DB.orders.map(o=>{
+    const paid = orderPaidAmount(o.id).recognized;
+    const due = Number(o.total||0) - paid;
+    return { id:o.id, label:`${o.orderNo} | ${o.customer} | ${o.currency} ${fmt2(o.total)} | 未收 ${fmt2(due)}` };
+  });
+
+  function fillSelect(sel, current){
+    sel.innerHTML = "";
+    const first = document.createElement("option");
+    first.value = "";
+    first.textContent = "请选择订单…";
+    sel.appendChild(first);
+    for(const o of opts){
+      const op = document.createElement("option");
+      op.value = o.id;
+      op.textContent = o.label;
+      sel.appendChild(op);
+    }
+    if(current) sel.value = current;
+  }
+
+  fillSelect($("payOrderId"), $("payOrderId").value);
+  fillSelect($("offOrderId"), $("offOrderId").value);
+}
+
+function renderAll(){
+  ensureDateInputs();
+  renderSelectors();
+  renderPI();
+  renderOrders();
+  renderPayments();
+  renderOffsets();
+  renderLedger();
+  // history only render on demand
+}
+
+/** ====== Export helpers ====== */
+function toCSV(rows){
+  const esc = (v)=> `"${String(v??"").replaceAll('"','""')}"`;
+  return rows.map(r=>r.map(esc).join(",")).join("\n");
+}
+function downloadText(filename, text, mime="text/plain"){
+  const blob = new Blob([text], {type: mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function escapeHTML(s){
+  return String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+}
+
+/** ====== Buttons ====== */
+$("btnBackup").addEventListener("click", ()=>{
+  const payload = { exportedAt: new Date().toISOString(), app: APP_ID, db: DB };
+  downloadText(`icare-backup-${today()}.json`, JSON.stringify(payload, null, 2), "application/json");
+});
+
+$("fileRestore").addEventListener("change", async (e)=>{
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const text = await file.text();
+  try{
+    const payload = JSON.parse(text);
+    if(!payload || !payload.db) throw new Error("bad");
+    if(!confirm("导入会覆盖当前数据，确定？")) return;
+    DB = payload.db;
+    saveDB();
+    alert("导入完成");
+  }catch(err){
+    alert("导入失败：文件不是有效备份JSON");
+  }finally{
+    e.target.value = "";
+  }
+});
+
+$("btnReset").addEventListener("click", ()=>{
+  if(!confirm("确定清空全部数据？此操作不可恢复（除非你有备份）。")) return;
+  DB = seedDB();
+  saveDB();
+});
+
+// CSV exports
+$("btnExportPIcsv").addEventListener("click", ()=>{
+  const rows = [["date","customer","pi_ref","currency","total","status","note"]];
+  for(const x of DB.pis){
+    rows.push([x.date,x.customer,x.ref,x.currency,fmt2(x.total),x.status,x.note]);
+  }
+  downloadText(`PI-${today()}.csv`, toCSV(rows), "text/csv");
+});
+$("btnExportOrdersCsv").addEventListener("click", ()=>{
+  const rows=[["date","order_no","customer","pi_ref","currency","total","paid(offset)","due","status","note"]];
+  for(const o of DB.orders){
+    const paid = orderPaidAmount(o.id).recognized;
+    const due = Number(o.total||0) - paid;
+    rows.push([o.date,o.orderNo,o.customer,o.piRef,o.currency,fmt2(o.total),fmt2(paid),fmt2(due),orderStatus(o),o.note]);
+  }
+  downloadText(`Orders-${today()}.csv`, toCSV(rows), "text/csv");
+});
+$("btnExportPayCsv").addEventListener("click", ()=>{
+  const rows=[["date","order_no","customer","currency","amount","method","note"]];
+  for(const p of DB.payments){
+    rows.push([p.date,p.orderNo,p.customer,p.currency,fmt2(p.amount),p.method,p.note]);
+  }
+  downloadText(`Payments-${today()}.csv`, toCSV(rows), "text/csv");
+});
+$("btnExportOffCsv").addEventListener("click", ()=>{
+  const rows=[["date","order_no","customer","currency","amount","ref","note"]];
+  for(const o of DB.offsets){
+    rows.push([o.date,o.orderNo,o.customer,o.currency,fmt2(o.amount),o.ref,o.note]);
+  }
+  downloadText(`Offsets-${today()}.csv`, toCSV(rows), "text/csv");
+});
+$("btnLedgerCsv").addEventListener("click", ()=>{
+  const rows=[["date","currency","payments_total","offsets_total","net"]];
+  for(const r of buildLedgerRows()){
+    rows.push([r.date,r.currency,fmt2(r.pay),fmt2(r.off),fmt2((r.pay||0)-(r.off||0))]);
+  }
+  downloadText(`Ledger-${today()}.csv`, toCSV(rows), "text/csv");
+});
+
+// Search
+$("btnHisSearch").addEventListener("click", ()=>renderHistory());
+$("btnHisCsv").addEventListener("click", ()=>{
+  const q = ($("hisQ").value||"").trim().toLowerCase();
+  if(!q){ alert("先输入客户名关键字"); return; }
+  const rows=[["type","date","customer","ref_no","currency","amount","note"]];
+  for(const x of DB.pis.filter(x=>(x.customer||"").toLowerCase().includes(q))){
+    rows.push(["PI",x.date,x.customer,x.ref,x.currency,fmt2(x.total),x.note]);
+  }
+  for(const o of DB.orders.filter(x=>(x.customer||"").toLowerCase().includes(q))){
+    rows.push(["Order",o.date,o.customer,o.orderNo,o.currency,fmt2(o.total),o.note]);
+  }
+  for(const p of DB.payments.filter(x=>(x.customer||"").toLowerCase().includes(q))){
+    rows.push(["Payment",p.date,p.customer,p.orderNo,p.currency,fmt2(p.amount),p.note]);
+  }
+  for(const o of DB.offsets.filter(x=>(x.customer||"").toLowerCase().includes(q))){
+    rows.push(["Offset",o.date,o.customer,o.orderNo,o.currency,fmt2(o.amount),o.note]);
+  }
+  downloadText(`History-${today()}.csv`, toCSV(rows), "text/csv");
+});
+
+// live re-render triggers
+["piSearch","orderSearch","paySearch","offSearch","ledgerFrom","ledgerTo"].forEach(id=>{
+  const el = $(id);
+  if(el) el.addEventListener("input", ()=>renderAll());
+});
+
+/** ====== Init ====== */
+ensureDateInputs();
+renderAll();
+const lastTab = localStorage.getItem(APP_ID+"::tab") || "pi";
+setTab(lastTab);
+</script>
 </body>
 </html>
